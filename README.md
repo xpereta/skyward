@@ -7,7 +7,9 @@ tested headlessly without a browser.
 
 ## Play it
 
-Open `index.html` in any modern browser (double-click works — the only network fetch is
+**Live:** https://xpereta.github.io/skyward/ (deployed automatically on every push to `main` via GitHub Pages)
+
+Or open `index.html` in any modern browser (double-click works — the only network fetch is
 Three.js from a CDN via an import map), or serve the repo:
 
 ```sh
@@ -69,6 +71,9 @@ a gate index; it has no say in scoring or physics.
 ./run-tests.sh        # headless unit tests (node --test), zero dependencies
 node build.mjs        # regenerate index.html from src/
 ```
+
+Deployment: `.github/workflows/deploy-pages.yml` rebuilds `index.html` on every push to
+`main` and publishes it to GitHub Pages (`xpereta.github.io/skyward`).
 
 Optional browser smoke test (boots the real page in Chromium, flies 8 s, forces a stall,
 checks pixels + sim state):
