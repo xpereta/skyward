@@ -1,8 +1,8 @@
 // core/input.js — input state machine. Mockable: consumes key-event arrays, never touches DOM.
 // Events: { type: 'down' | 'up', code: string } using KeyboardEvent.code values.
 
-const PITCH_UP = ['KeyW', 'ArrowUp'];
-const PITCH_DOWN = ['KeyS', 'ArrowDown'];
+const PITCH_DOWN = ['KeyW', 'ArrowUp'];   // W pushes the nose DOWN (user preference)
+const PITCH_UP = ['KeyS', 'ArrowDown'];
 const ROLL_LEFT = ['KeyA', 'ArrowLeft'];
 const ROLL_RIGHT = ['KeyD', 'ArrowRight'];
 const YAW_LEFT = ['KeyQ'];

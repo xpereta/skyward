@@ -75,8 +75,8 @@ export function step(state, inputSnapshot, dt) {
 
   const speedFactor = Math.min(1, state.speed / 140);
   // Positive yaw input/roll are leftward, but the rendered +Z-forward convention
-  // means leftward world rotation decreases yaw from the spawn heading (PI).
-  let yaw = state.attitude.yaw - (yawInput + roll * C.BANK_TURN_FACTOR * speedFactor) * dt;
+  // means leftward world rotation increases yaw from the spawn heading (PI).
+  let yaw = state.attitude.yaw + (yawInput + roll * C.BANK_TURN_FACTOR * speedFactor) * dt;
 
   const attitude = { pitch, roll, yaw };
   const fwd = forward(attitude);

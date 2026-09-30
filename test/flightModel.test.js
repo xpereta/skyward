@@ -97,16 +97,17 @@ test('left and right bank inputs curve in the matching world-space direction', (
   const right = fly(s0, { ...NO_INPUT, roll: -1 }, 1);
   assert.ok(left.attitude.roll > 0.5, 'positive roll should hold a left bank');
   assert.ok(right.attitude.roll < -0.5, 'negative roll should hold a right bank');
-  assert.ok(left.pos.x < s0.pos.x, `left bank should curve toward -x from +z, got x=${left.pos.x}`);
-  assert.ok(right.pos.x > s0.pos.x, `right bank should curve toward +x from +z, got x=${right.pos.x}`);
+  // From +z heading, turning right curves toward -x (user-verified direction)
+  assert.ok(left.pos.x > s0.pos.x, `left bank should curve toward +x from +z, got x=${left.pos.x}`);
+  assert.ok(right.pos.x < s0.pos.x, `right bank should curve toward -x from +z, got x=${right.pos.x}`);
 });
 
 test('direct yaw inputs curve left/right from the spawn heading', () => {
   const s0 = createFlightState(SPAWN); // heading PI points along +z
   const left = fly(s0, { ...NO_INPUT, yaw: 1 }, 1);
   const right = fly(s0, { ...NO_INPUT, yaw: -1 }, 1);
-  assert.ok(left.pos.x < s0.pos.x, `left yaw input should curve toward -x, got x=${left.pos.x}`);
-  assert.ok(right.pos.x > s0.pos.x, `right yaw input should curve toward +x, got x=${right.pos.x}`);
+  assert.ok(left.pos.x > s0.pos.x, `left yaw input should curve toward +x, got x=${left.pos.x}`);
+  assert.ok(right.pos.x < s0.pos.x, `right yaw input should curve toward -x, got x=${right.pos.x}`);
 });
 
 test('pitch input changes pitch attitude', () => {

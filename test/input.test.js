@@ -7,20 +7,20 @@ test('empty snapshot is all zeros', () => {
   assert.deepEqual(inp.snapshot(), { throttleDelta: 0, pitch: 0, roll: 0, yaw: 0 });
 });
 
-test('pitch up/down keys produce correct values', () => {
+test('W pushes the nose down; S pushes it up (user preference)', () => {
   const inp = createInput();
   inp.update([{ type: 'down', code: 'KeyW' }]);
-  assert.equal(inp.snapshot().pitch, 1);
+  assert.equal(inp.snapshot().pitch, -1); // W = nose down
   inp.update([{ type: 'up', code: 'KeyW' }, { type: 'down', code: 'KeyS' }]);
-  assert.equal(inp.snapshot().pitch, -1);
+  assert.equal(inp.snapshot().pitch, 1);  // S = nose up
 });
 
 test('arrow keys are aliases for WASD', () => {
   const inp = createInput();
   inp.update([{ type: 'down', code: 'ArrowUp' }, { type: 'down', code: 'ArrowLeft' }]);
   const s = inp.snapshot();
-  assert.equal(s.pitch, 1);
-  assert.equal(s.roll, 1); // left bank positive
+  assert.equal(s.pitch, -1); // ArrowUp follows W (nose down)
+  assert.equal(s.roll, 1);   // left bank positive
 });
 
 test('roll and yaw directions', () => {
@@ -45,7 +45,7 @@ test('held keys persist across updates; release clears them', () => {
   const inp = createInput();
   inp.update([{ type: 'down', code: 'KeyW' }]);
   inp.update([]); // no events — still held
-  assert.equal(inp.snapshot().pitch, 1);
+  assert.equal(inp.snapshot().pitch, -1);
   inp.update([{ type: 'up', code: 'KeyW' }]);
   assert.equal(inp.snapshot().pitch, 0);
 });
