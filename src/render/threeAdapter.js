@@ -10,15 +10,17 @@ import { noseDirection } from '../core/flightModel.js';
 function attitudeToBasis(attitude) {
   const F = normalize(noseDirection(attitude));          // world-space nose direction
   const up0 = { x: 0, y: 1, z: 0 };
-  let R = cross(F, up0);                                  // body-right (perp to nose & world-up; +x when nose is +z)
+  let R = cross(up0, F);                                  // right (perp to nose & world-up)
   if (R.x * R.x + R.y * R.y + R.z * R.z < 1e-8) R = { x: 1, y: 0, z: 0 }; // nose ~vertical fallback
   R = normalize(R);
   const U1 = cross(F, R);                                 // level up in vertical plane of F
   const cr = Math.cos(attitude.roll), sr = Math.sin(attitude.roll);
-  // Positive roll is a left bank: the right wing rises and the top tilts left.
-  // Negative roll (D/right) lowers the right wing, matching the turn direction.
-  const U = add(scale(U1, cr), scale(R, -sr));
-  const Rr = add(scale(R, cr), scale(U1, sr));
+  // Roll is applied as a rotation about the nose axis by -attitude.roll so the
+  // canopy always leans INTO the turn: positive roll (left bank, A) tilts the top
+  // toward +R; negative roll (right bank, D) tilts it toward -R. (Rotating both
+  // U and Rr by the same angle keeps the body basis a proper rotation.)
+  const U = add(scale(U1, cr), scale(R, sr));
+  const Rr = add(scale(R, cr), scale(U1, -sr));
   return { R: normalize(Rr), U: normalize(U), F };
 }
 
