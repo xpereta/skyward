@@ -91,17 +91,22 @@ test('stall forces the nose down toward the dive limit', () => {
     `pitch must not exceed dive limit, got ${after.attitude.pitch}`);
 });
 
-test('banked turn changes heading in the direction of bank', () => {
-  const s0 = createFlightState(SPAWN);
-  // left bank (roll +1) for a few seconds at speed
-  const turned = fly(s0, { ...NO_INPUT, roll: 1 }, 3);
-  assert.ok(Math.abs(turned.attitude.roll) > 0.5, 'should hold a bank');
-  const dYaw = turned.attitude.yaw - s0.attitude.yaw;
-  assert.ok(dYaw > 0.2, `left bank should increase yaw (turn left), got ${dYaw}`);
+test('left and right bank inputs curve in the matching world-space direction', () => {
+  const s0 = createFlightState(SPAWN); // heading PI points along +z
+  const left = fly(s0, { ...NO_INPUT, roll: 1 }, 1);
+  const right = fly(s0, { ...NO_INPUT, roll: -1 }, 1);
+  assert.ok(left.attitude.roll > 0.5, 'positive roll should hold a left bank');
+  assert.ok(right.attitude.roll < -0.5, 'negative roll should hold a right bank');
+  assert.ok(left.pos.x < s0.pos.x, `left bank should curve toward -x from +z, got x=${left.pos.x}`);
+  assert.ok(right.pos.x > s0.pos.x, `right bank should curve toward +x from +z, got x=${right.pos.x}`);
+});
 
-  const turnedR = fly(s0, { ...NO_INPUT, roll: -1 }, 3);
-  const dYawR = turnedR.attitude.yaw - s0.attitude.yaw;
-  assert.ok(dYawR < -0.2, `right bank should decrease yaw, got ${dYawR}`);
+test('direct yaw inputs curve left/right from the spawn heading', () => {
+  const s0 = createFlightState(SPAWN); // heading PI points along +z
+  const left = fly(s0, { ...NO_INPUT, yaw: 1 }, 1);
+  const right = fly(s0, { ...NO_INPUT, yaw: -1 }, 1);
+  assert.ok(left.pos.x < s0.pos.x, `left yaw input should curve toward -x, got x=${left.pos.x}`);
+  assert.ok(right.pos.x > s0.pos.x, `right yaw input should curve toward +x, got x=${right.pos.x}`);
 });
 
 test('pitch input changes pitch attitude', () => {

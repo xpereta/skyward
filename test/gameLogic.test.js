@@ -117,6 +117,58 @@ test('crash on water', () => {
   assert.ok(r.events.some(e => e.type === 'crash' && e.reason === 'water'));
 });
 
+test('jet at altitude above terrain does NOT crash', () => {
+  const w = makeWorld([], (x, z) => 500, -9999); // ground at y=500 everywhere
+  let g = createGame('freeFlight', w);
+  const r1 = update(g, FLIGHT({ x: 0, y: 600, z: 0 }), 1 / 60);
+  assert.equal(r1.game.phase, 'flying');
+  assert.ok(!r1.events.some(e => e.type === 'crash'));
+  // keep flying above the terrain for several more steps — still no crash
+  let g2 = r1.game;
+  for (let i = 0; i < 5; i++) {
+    g2 = update(g2, FLIGHT({ x: i, y: 600 + i * 10, z: i }), 1 / 60).game;
+  }
+  assert.equal(g2.phase, 'flying');
+});
+
+test('jet driven below terrain heightAt crashes on the next step', () => {
+  const w = makeWorld([], (x, z) => 500, -9999); // ground at y=500 everywhere
+  let g = createGame('freeFlight', w);
+  // first step: safely above terrain -> still flying
+  const r1 = update(g, FLIGHT({ x: 0, y: 520, z: 0 }), 1 / 60);
+  assert.equal(r1.game.phase, 'flying');
+  // next step: driven below heightAt(0,0)=500 -> crash detected on that step
+  const r2 = update(r1.game, FLIGHT({ x: 0, y: 480, z: 1 }), 1 / 60);
+  assert.equal(r2.game.phase, 'crashed');
+  assert.ok(r2.events.some(e => e.type === 'crash' && e.reason === 'terrain'));
+});
+
+test('after crash the flight state no longer advances; restart resets to flying', () => {
+  const w = makeWorld([], (x, z) => 500, -9999); // ground at y=500 everywhere
+  let g = createGame('freeFlight', w);
+  g = update(g, FLIGHT({ x: 0, y: 480, z: 0 }), 1 / 60).game; // crash into terrain
+  assert.equal(g.phase, 'crashed');
+
+  // further steps are no-ops: time/score/phase frozen, no events (even from below terrain)
+  const before = JSON.parse(JSON.stringify(g));
+  for (let i = 0; i < 3; i++) {
+    const r = update(g, FLIGHT({ x: i * 100, y: -500, z: i * 100 }, 200), 1 / 60);
+    assert.equal(r.game.phase, 'crashed');
+    assert.deepEqual(r.events, []);
+    g = r.game;
+  }
+  assert.equal(g.time, before.time);
+  assert.equal(g.score, before.score);
+
+  // restart: a fresh game in the same mode resets to ready -> flying on first step
+  const g2 = createGame('freeFlight', w);
+  assert.equal(g2.phase, 'ready');
+  assert.equal(g2.score, 0);
+  assert.equal(g2.time, 0);
+  const r2 = update(g2, FLIGHT({ x: 0, y: 600, z: 0 }), 1 / 60); // back above terrain
+  assert.equal(r2.game.phase, 'flying');
+});
+
 test('freeFlight never completes and ignores gates', () => {
   const gates = [{ pos: { x: 0, y: 500, z: 100 }, radius: 45 }];
   let g = createGame('freeFlight', makeWorld(gates));

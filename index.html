@@ -245,7 +245,9 @@ function step(state, inputSnapshot, dt) {
   roll = Math.max(-C.ROLL_LIMIT, Math.min(C.ROLL_LIMIT, roll));
 
   const speedFactor = Math.min(1, state.speed / 140);
-  let yaw = state.attitude.yaw + (yawInput + roll * C.BANK_TURN_FACTOR * speedFactor) * dt;
+  // Positive yaw input/roll are leftward, but the rendered +Z-forward convention
+  // means leftward world rotation decreases yaw from the spawn heading (PI).
+  let yaw = state.attitude.yaw - (yawInput + roll * C.BANK_TURN_FACTOR * speedFactor) * dt;
 
   const attitude = { pitch, roll, yaw };
   const fwd = forward(attitude);
@@ -684,9 +686,10 @@ function attitudeToBasis(attitude) {
   let R = cross(up0, F);                                  // right (perp to nose & world-up)
   if (R.x * R.x + R.y * R.y + R.z * R.z < 1e-8) R = { x: 1, y: 0, z: 0 }; // nose ~vertical fallback
   R = normalize(R);
-  const U1 = cross(F, R);                                 // level up in the vertical plane of F
+  const U1 = cross(F, R);                                 // level up in vertical plane of F
   const cr = Math.cos(attitude.roll), sr = Math.sin(attitude.roll);
-  // positive roll = left bank (top tilts toward -R)
+  // Positive roll is a left bank: the right wing rises and the top tilts left.
+  // Negative roll (D/right) lowers the right wing, matching the turn direction.
   const U = add(scale(U1, cr), scale(R, -sr));
   const Rr = add(scale(R, cr), scale(U1, sr));
   return { R: normalize(Rr), U: normalize(U), F };
@@ -743,8 +746,8 @@ function buildJet() {
 
   // main wings (swept boxes)
   const wingGeo = new THREE.BoxGeometry(14, 0.5, 3.4);
-  const wingL = new THREE.Mesh(wingGeo, bodyMat); wingL.position.set(-6.2, 0.2, -0.5); wingL.rotation.y = 0.28;
-  const wingR = new THREE.Mesh(wingGeo, bodyMat); wingR.position.set(6.2, 0.2, -0.5); wingR.rotation.y = -0.28;
+  const wingL = new THREE.Mesh(wingGeo, bodyMat); wingL.position.set(-6.2, 0.2, -0.5); wingL.rotation.y = -0.28;
+  const wingR = new THREE.Mesh(wingGeo, bodyMat); wingR.position.set(6.2, 0.2, -0.5); wingR.rotation.y = 0.28;
   g.add(wingL, wingR);
 
   // tail wings + vertical stabilizer
@@ -1022,7 +1025,8 @@ function boot({ canvas, container }) {
           break;
         }
         case 'crash':
-          hud.showBanner('CRASHED (' + ev.reason + ') — press R to retry', 8000);
+          // persistent restart prompt (ms=0): stays until R restarts or M opens the menu
+          hud.showBanner('CRASHED (' + ev.reason + ') — press R to retry', 0);
           break;
       }
     }
@@ -1041,6 +1045,7 @@ function boot({ canvas, container }) {
       acc += dt;
       while (acc >= STEP) {
         acc -= STEP;
+        if (game.phase === 'crashed') continue; // frozen after crash: no flight/logic steps until R restarts
         const snap = input.snapshot();
         flightState = flightStep(flightState, snap, STEP);
         const res = gameUpdate(game, flightState, STEP);

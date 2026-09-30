@@ -128,7 +128,8 @@ export function boot({ canvas, container }) {
           break;
         }
         case 'crash':
-          hud.showBanner('CRASHED (' + ev.reason + ') — press R to retry', 8000);
+          // persistent restart prompt (ms=0): stays until R restarts or M opens the menu
+          hud.showBanner('CRASHED (' + ev.reason + ') — press R to retry', 0);
           break;
       }
     }
@@ -147,6 +148,7 @@ export function boot({ canvas, container }) {
       acc += dt;
       while (acc >= STEP) {
         acc -= STEP;
+        if (game.phase === 'crashed') continue; // frozen after crash: no flight/logic steps until R restarts
         const snap = input.snapshot();
         flightState = flightStep(flightState, snap, STEP);
         const res = gameUpdate(game, flightState, STEP);

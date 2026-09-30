@@ -13,9 +13,10 @@ function attitudeToBasis(attitude) {
   let R = cross(up0, F);                                  // right (perp to nose & world-up)
   if (R.x * R.x + R.y * R.y + R.z * R.z < 1e-8) R = { x: 1, y: 0, z: 0 }; // nose ~vertical fallback
   R = normalize(R);
-  const U1 = cross(F, R);                                 // level up in the vertical plane of F
+  const U1 = cross(F, R);                                 // level up in vertical plane of F
   const cr = Math.cos(attitude.roll), sr = Math.sin(attitude.roll);
-  // positive roll = left bank (top tilts toward -R)
+  // Positive roll is a left bank: the right wing rises and the top tilts left.
+  // Negative roll (D/right) lowers the right wing, matching the turn direction.
   const U = add(scale(U1, cr), scale(R, -sr));
   const Rr = add(scale(R, cr), scale(U1, sr));
   return { R: normalize(Rr), U: normalize(U), F };
@@ -72,8 +73,8 @@ function buildJet() {
 
   // main wings (swept boxes)
   const wingGeo = new THREE.BoxGeometry(14, 0.5, 3.4);
-  const wingL = new THREE.Mesh(wingGeo, bodyMat); wingL.position.set(-6.2, 0.2, -0.5); wingL.rotation.y = 0.28;
-  const wingR = new THREE.Mesh(wingGeo, bodyMat); wingR.position.set(6.2, 0.2, -0.5); wingR.rotation.y = -0.28;
+  const wingL = new THREE.Mesh(wingGeo, bodyMat); wingL.position.set(-6.2, 0.2, -0.5); wingL.rotation.y = -0.28;
+  const wingR = new THREE.Mesh(wingGeo, bodyMat); wingR.position.set(6.2, 0.2, -0.5); wingR.rotation.y = 0.28;
   g.add(wingL, wingR);
 
   // tail wings + vertical stabilizer
