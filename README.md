@@ -20,7 +20,7 @@ python3 -m http.server 8000   # then visit http://localhost:8000/index.html
 
 | Key | Action |
 |---|---|
-| W / S (or ↑/↓) | Pitch up / down |
+| W / S (or ↑/↓) | Pitch down / up (W pushes the nose down) |
 | A / D (or ←/→) | Roll left / right (banked turns) |
 | Q / E | Yaw left / right |
 | Shift / Ctrl | Throttle up / down |
@@ -33,9 +33,13 @@ python3 -m http.server 8000   # then visit http://localhost:8000/index.html
 - **Gate Run** — fly through all 12 rings in order. 100 pts per gate (+50 speed bonus above
   160 m/s), 25 for a near miss. Best time is saved locally.
 - **Free Flight** — sandbox, no gates, no score pressure.
+- **Worlds** — pick a terrain in the menu (or via `?world=`): *Alpine* (default),
+  *Islands*, *Canyon*, or *Dunes*. Each is a frozen preset of the same seeded generator;
+  switching reloads with that world's layout.
 - **Stalls are real**: below ~55 m/s the jet stalls (red pulsing HUD + banner). Recover by
   pitching down and applying full throttle to trade altitude for airspeed.
-- Crashing into terrain or water ends the run; press R to retry.
+- Crashing into terrain or water ends the run with an impact burst — debris, smoke and a
+  tumbling wreck that settles onto the ground; press R to retry.
 
 ## Architecture
 
@@ -49,12 +53,12 @@ src/
   core/vec3.js         # vector math on plain {x,y,z}
   core/input.js        # input state machine — consumes key-event arrays, never DOM
   core/flightModel.js  # deterministic physics step: thrust/drag/gravity, stall + hysteresis
-  core/worldGen.js     # seeded terrain (periodic value noise) + ordered gate chain
+  core/worldGen.js     # seeded terrain (periodic value noise) + ordered gate chain; preset worlds
   core/gameLogic.js    # modes, scoring, crash/stall events — emits plain events
   render/threeAdapter.js  # ONLY module importing three.js; scene/camera/meshes
   ui/hud.js            # DOM overlay reading plain snapshots
   audio/engineSound.js # WebAudio engine synth (numbers in, sound out)
-  main.js              # composition root: rAF loop + fixed 60 Hz timestep accumulator
+  main.js              # composition root: rAF loop, fixed 60 Hz sim steps, interpolated rendering
 build.mjs              # bundles src/ into a single self-contained index.html
 test/*.test.js         # headless unit tests (node:test, zero dependencies)
 tools/browser-smoke.js # optional end-to-end check in real Chromium (needs puppeteer-core)
@@ -91,6 +95,8 @@ node browser-smoke.js                    # set CHROME_PATH if it can't auto-dete
   Pitch is clamped (~77°) so a stall dives instead of spinning; roll self-levels when released.
 - **Terrain**: periodic (toroidal) value noise with gentle octave growth, so the heightfield
   is continuous everywhere and slopes stay flyable. A flattened corridor along the gate path
-  keeps runs fair. Every gate has ≥50 m terrain clearance by construction.
+  keeps runs fair. Every gate has ≥50 m terrain clearance by construction. The generator is
+  config-driven (`generateWorld(seed, config)`); four frozen presets (alpine/islands/canyon/
+  dunes) are exposed in the menu, and a no-config call reproduces the original world exactly.
 - **Determinism**: one seeded PRNG (mulberry32); same seed ⇒ identical world. The shipped
   build uses a fixed, hand-checked seed.
