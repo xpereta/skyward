@@ -4,7 +4,7 @@
 
 import { createInput } from './core/input.js';
 import { createFlightState, step as flightStep } from './core/flightModel.js';
-import { generateWorld } from './core/worldGen.js';
+import { generateWorld, WORLD_PRESETS } from './core/worldGen.js';
 import { createGame, update as gameUpdate } from './core/gameLogic.js';
 import { createRenderer } from './render/threeAdapter.js';
 import { createHud } from './ui/hud.js';
@@ -20,7 +20,10 @@ function headingDeg(yaw) {
 }
 
 export function boot({ canvas, container }) {
-  const world = generateWorld(31337);               // fixed seed: a known-good flyable layout
+  // World selection: ?world=<id> picks a terrain preset; falls back to 'alpine'.
+  const worldId = (typeof location !== 'undefined' && new URLSearchParams(location.search).get('world')) || 'alpine';
+  const worldConfig = WORLD_PRESETS[worldId] || WORLD_PRESETS.alpine;
+  const world = generateWorld(31337, worldConfig);   // fixed seed: a known-good flyable layout per world
   const input = createInput();
   let renderer, hud, audio;
   const preserve = typeof location !== 'undefined' && /[?&]debug\b/.test(location.search);
@@ -43,13 +46,24 @@ export function boot({ canvas, container }) {
   // ---------- menu overlay (main.js is allowed to touch the DOM) ----------
   const menu = document.createElement('div');
   menu.className = 'sw-menu';
+  const worldOptions = Object.keys(WORLD_PRESETS)
+    .map((id) => `<option value="${id}"${id === worldId ? ' selected' : ''}>${WORLD_PRESETS[id].name}</option>`)
+    .join('');
   menu.innerHTML = `
     <h1>SKYWARD</h1>
     <p class="sub">low-poly arcade flight · ${world.gates.length} gates over the mountains</p>
+    <label class="sw-world">WORLD <select id="sw-world">${worldOptions}</select></label>
     <button data-mode="gateRun">GATE RUN</button>
     <button data-mode="freeFlight">FREE FLIGHT</button>
     <p class="best" id="sw-best"></p>`;
   container.appendChild(menu);
+
+  // World switch reloads with the new ?world= param (terrain is built at boot).
+  menu.querySelector('#sw-world').addEventListener('change', (e) => {
+    const url = new URL(location.href);
+    url.searchParams.set('world', e.target.value);
+    location.href = url.toString();
+  });
 
   function refreshBest() {
     const b = menu.querySelector('#sw-best');
@@ -66,6 +80,7 @@ export function boot({ canvas, container }) {
     mode = m;
     game = createGame(mode, world);
     flightState = createFlightState(world.spawn);
+    prevFlightState = null; // no interpolation across a (re)start jump
     cameraMode = 'chase';
     renderer.setCameraMode(cameraMode);
     showMenu(false);
@@ -138,6 +153,39 @@ export function boot({ canvas, container }) {
   // ---------- main loop: fixed-timestep logic, per-frame render ----------
   let last = performance.now();
   let acc = 0;
+  let prevFlightState = null;   // state before the latest sim step (for render interpolation)
+
+  // Interpolate between two flight states so rendering is smooth on displays
+  // faster than the 60Hz logic rate: pos lerps linearly, pitch/roll lerp
+  // directly (they are clamped, never wrapped), yaw takes the shortest arc.
+  function lerpAngle(a, b, t) {
+    let d = (b - a) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return a + d * t;
+  }
+
+  function renderState(alpha) {
+    const cur = flightState || idleFlight;
+    const prev = prevFlightState && prevFlightState !== cur ? prevFlightState : cur;
+    if (alpha <= 0 || prev === cur) return cur;
+    return {
+      pos: {
+        x: prev.pos.x + (cur.pos.x - prev.pos.x) * alpha,
+        y: prev.pos.y + (cur.pos.y - prev.pos.y) * alpha,
+        z: prev.pos.z + (cur.pos.z - prev.pos.z) * alpha,
+      },
+      vel: cur.vel, // not used by the renderer; keep current
+      speed: cur.speed,
+      attitude: {
+        pitch: prev.attitude.pitch + (cur.attitude.pitch - prev.attitude.pitch) * alpha,
+        roll: prev.attitude.roll + (cur.attitude.roll - prev.attitude.roll) * alpha,
+        yaw: lerpAngle(prev.attitude.yaw, cur.attitude.yaw, alpha),
+      },
+      throttle: cur.throttle,
+      stalled: cur.stalled,
+    };
+  }
 
   function frame(now) {
     requestAnimationFrame(frame);
@@ -148,6 +196,7 @@ export function boot({ canvas, container }) {
       acc += dt;
       while (acc >= STEP) {
         acc -= STEP;
+        prevFlightState = flightState; // remember pre-step state for interpolation
         if (game.phase === 'crashed') continue; // frozen after crash: no flight/logic steps until R restarts
         const snap = input.snapshot();
         flightState = flightStep(flightState, snap, STEP);
@@ -156,7 +205,7 @@ export function boot({ canvas, container }) {
         handleEvents(res.events);
       }
 
-      // HUD snapshot (plain numbers only)
+      // HUD snapshot (plain numbers only) — real sim state, never interpolated
       hud.update({
         speed: flightState.speed,
         alt: Math.max(0, flightState.pos.y - world.heightAt(flightState.pos.x, flightState.pos.z)),
@@ -177,8 +226,8 @@ export function boot({ canvas, container }) {
     }
 
     renderer.update(
-      flightState || idleFlight,
-      game ? { nextGate: game.nextGate } : null
+      renderState(Math.min(1, acc / STEP)),
+      game ? { nextGate: game.nextGate, phase: game.phase } : null
     );
   }
   requestAnimationFrame(frame);

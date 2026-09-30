@@ -53,6 +53,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1220; }
 }
 .sw-menu h1 { margin: 0; font-size: clamp(52px, 9vw, 96px); letter-spacing: 0.18em; font-weight: 900; color: var(--ink); text-shadow: 0 6px 40px rgba(0,0,0,0.5); }
 .sw-menu .sub { margin: -6px 0 12px; color: var(--dim); font-size: 15px; letter-spacing: 0.04em; }
+.sw-menu .sw-world { pointer-events: auto; display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; letter-spacing: 0.12em; }
+.sw-menu select { cursor: pointer; padding: 6px 10px; font-size: 14px; font-weight: 700; letter-spacing: 0.05em; color: var(--ink); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 8px; }
+.sw-menu select:hover { border-color: var(--accent); }
 .sw-menu button {
   pointer-events: auto; cursor: pointer; width: min(320px, 80vw); padding: 14px 0; margin-top: 6px;
   font-size: 17px; font-weight: 700; letter-spacing: 0.1em; color: var(--ink);

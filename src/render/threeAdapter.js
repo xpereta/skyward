@@ -29,7 +29,7 @@ function elevationColor(h, waterLevel) {
   if (h < waterLevel + 4) return [0.36, 0.52, 0.42];      // shallow sand/grass edge
   if (h < 40) return [0.30, 0.58, 0.30];                  // lowland green
   if (h < 110) return [0.24, 0.47, 0.26];                 // mid forest
-  if (h < 190) return [0.45, 0.42, 0.34];                 // rock
+  if (h < 190) return [0.45, 0.42, 0.34];                  // rock
   if (h < 250) return [0.58, 0.57, 0.56];                 // high rock
   return [0.93, 0.95, 0.98];                              // snow
 }
@@ -151,6 +151,154 @@ export function createRenderer(canvas, world, opts = {}) {
   const jet = buildJet();
   scene.add(jet);
 
+  // ---------- crash feedback (renderer-owned clock) ----------
+  // The sim is frozen after a crash (main.js stops stepping flightState), so all
+  // effects below animate on performance.now() deltas, not sim dt. Triggered by the
+  // context contract: update(flightState, { nextGate, phase, crash }). If `phase`
+  // is absent (old callers) nothing here ever activates — behavior is identical to
+  // before. The renderer records crash.firstSeenAt itself on transition.
+  const CRASH = {
+    active: false,
+    firstSeenAt: 0,      // ms timestamp when the crashed state was first observed
+    reason: null,
+    impact: new THREE.Vector3(),   // world-space impact point (from flightState.pos)
+    targetY: 0,                 // wreck rest height at the crash location
+    spinAxis: new THREE.Vector3(),
+    spinRate: 0,                // rad/s tumble about spinAxis
+    lastNow: performance.now(),
+  };
+
+  const DEBRIS_COUNT = 64;
+  const debrisGeo = new THREE.BufferGeometry();
+  const debrisPos = new Float32Array(DEBRIS_COUNT * 3);
+  const debrisVel = new Float32Array(DEBRIS_COUNT * 3);
+  debrisGeo.setAttribute('position', new THREE.BufferAttribute(debrisPos, 3));
+  const debrisMat = new THREE.PointsMaterial({ color: 0xffb45e, size: 1.7, transparent: true, opacity: 1 });
+  const debris = new THREE.Points(debrisGeo, debrisMat);
+  debris.visible = false;
+  debris.frustumCulled = false; // particles fly far from the initial bounds
+  scene.add(debris);
+
+  const SMOKE_COUNT = 7;
+  const smokeGeo = new THREE.SphereGeometry(1, 8, 6);
+  const smokes = [];
+  for (let i = 0; i < SMOKE_COUNT; i++) {
+    const m = new THREE.Mesh(smokeGeo,
+      new THREE.MeshBasicMaterial({ color: 0x8d949c, transparent: true, opacity: 0, depthWrite: false }));
+    m.visible = false;
+    scene.add(m);
+    smokes.push({ mesh: m, off: new THREE.Vector3(), vel: new THREE.Vector3(), start: 0 });
+  }
+
+  const _qDelta = new THREE.Quaternion();
+  const _dir = new THREE.Vector3();
+
+  function beginCrash(flightState, context, nowMs) {
+    const p = flightState.pos;
+    CRASH.active = true;
+    CRASH.firstSeenAt = nowMs;
+    CRASH.lastNow = nowMs;
+    // record the timestamp on the caller's crash object too (contract: renderer owns it)
+    if (context && context.crash && typeof context.crash === 'object') {
+      context.crash.firstSeenAt = nowMs;
+      CRASH.reason = context.crash.reason || null;
+    } else {
+      CRASH.reason = null;
+    }
+    CRASH.impact.set(p.x, p.y, p.z);
+    // rest height: terrain at the crash location (slightly above so wings don't clip);
+    // for water crashes this sinks the wreck just below the surface instead of hovering
+    CRASH.targetY = Math.max(world.heightAt(p.x, p.z) + 0.6, world.waterLevel - 4);
+
+    // random tumble axis + rate (renderer-only randomness; visuals don't affect sim)
+    _dir.set(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1);
+    if (_dir.lengthSq() < 1e-4) _dir.set(0.3, 1, -0.2);
+    CRASH.spinAxis.copy(_dir).normalize();
+    CRASH.spinRate = 2.5 + Math.random() * 2;
+
+    // debris burst: outward velocities biased upward, gravity pulls them back down
+    for (let i = 0; i < DEBRIS_COUNT; i++) {
+      const i3 = i * 3;
+      debrisPos[i3]     = p.x + (Math.random() - 0.5) * 2;
+      debrisPos[i3 + 1] = p.y + (Math.random() - 0.5) * 2;
+      debrisPos[i3 + 2] = p.z + (Math.random() - 0.5) * 2;
+      _dir.set(Math.random() * 2 - 1, Math.random() * 1.4 + 0.25, Math.random() * 2 - 1).normalize();
+      const sp = 8 + Math.random() * 26;
+      debrisVel[i3]     = _dir.x * sp;
+      debrisVel[i3 + 1] = _dir.y * sp;
+      debrisVel[i3 + 2] = _dir.z * sp;
+    }
+    debrisGeo.attributes.position.needsUpdate = true;
+    debrisMat.opacity = 1;
+    debris.visible = true;
+
+    // smoke puffs: staggered starts so the plume lasts ~3s total
+    for (let i = 0; i < SMOKE_COUNT; i++) {
+      const s = smokes[i];
+      s.off.set((Math.random() - 0.5) * 3, Math.random() * 1.5, (Math.random() - 0.5) * 3);
+      s.vel.set((Math.random() - 0.5) * 2, 2.5 + Math.random() * 2.5, (Math.random() - 0.5) * 2);
+      s.start = i * 0.18;
+      s.mesh.visible = true;
+      s.mesh.material.opacity = 0;
+      s.mesh.scale.setScalar(0.6);
+    }
+  }
+
+  function endCrash() {
+    CRASH.active = false;
+    debris.visible = false;
+    for (let i = 0; i < SMOKE_COUNT; i++) {
+      smokes[i].mesh.visible = false;
+      smokes[i].mesh.material.opacity = 0;
+    }
+  }
+
+  function stepCrashEffects(nowMs, dtFx) {
+    const t = (nowMs - CRASH.firstSeenAt) / 1000; // seconds since impact
+
+    // --- jet wreck: slide/sink to terrain height while tumbling about a random axis ---
+    const SINK_DUR = 1.4;
+    const k = Math.min(1, t / SINK_DUR);
+    const ease = 1 - Math.pow(1 - k, 3); // easeOutCubic: fast drop, gentle settle
+    jet.position.set(CRASH.impact.x, CRASH.impact.y + (CRASH.targetY - CRASH.impact.y) * ease, CRASH.impact.z);
+    if (k < 1) {
+      _qDelta.setFromAxisAngle(CRASH.spinAxis, CRASH.spinRate * dtFx * (1 - k * 0.7)); // slows as it settles
+      jet.quaternion.premultiply(_qDelta); // world-space tumble about a fixed axis
+    }
+
+    // --- debris: outward + gravity, fading out over ~1.5s ---
+    const DEBRIS_LIFE = 1.5;
+    if (t < DEBRIS_LIFE) {
+      for (let i = 0; i < DEBRIS_COUNT * 3; i += 3) {
+        debrisVel[i + 1] -= 24 * dtFx; // heavy gravity: punchy arcs that fall back fast
+        debrisPos[i]     += debrisVel[i] * dtFx;
+        debrisPos[i + 1] += debrisVel[i + 1] * dtFx;
+        debrisPos[i + 2] += debrisVel[i + 2] * dtFx;
+      }
+      debrisGeo.attributes.position.needsUpdate = true;
+      debrisMat.opacity = Math.max(0, 1 - t / DEBRIS_LIFE);
+    } else if (debris.visible) {
+      debris.visible = false;
+    }
+
+    // --- smoke: rise from the impact point, grow and fade over ~3s total ---
+    const SMOKE_LIFE = 2.6;
+    for (let i = 0; i < SMOKE_COUNT; i++) {
+      const s = smokes[i];
+      const st = t - s.start;
+      if (st <= 0) { s.mesh.visible = false; continue; }
+      if (st >= SMOKE_LIFE) { s.mesh.visible = false; s.mesh.material.opacity = 0; continue; }
+      const f = st / SMOKE_LIFE; // 0..1 through this puff's life
+      s.mesh.position.set(
+        CRASH.impact.x + s.off.x + s.vel.x * st,
+        CRASH.impact.y + s.off.y + s.vel.y * st,
+        CRASH.impact.z + s.off.z + s.vel.z * st);
+      s.mesh.scale.setScalar(0.8 + f * 5.2); // grows as it rises
+      s.mesh.material.opacity = 0.42 * Math.sin(Math.PI * Math.min(1, f * 1.15)); // quick in, slow out
+      s.mesh.visible = true;
+    }
+  }
+
   let cameraMode = 'chase';
   const _m4 = new THREE.Matrix4();
   const _vR = new THREE.Vector3(), _vU = new THREE.Vector3(), _vF = new THREE.Vector3();
@@ -172,13 +320,35 @@ export function createRenderer(canvas, world, opts = {}) {
 
   function update(flightState, gameSnapshot) {
     const p = flightState.pos;
-    jet.position.set(p.x, p.y, p.z);
-    const b = attitudeToBasis(flightState.attitude);
+    // extended context contract: { nextGate, phase, crash }. `phase`/`crash` are optional —
+    // old callers that omit them get exactly the previous behavior.
+    const phase = (gameSnapshot && typeof gameSnapshot.phase === 'string') ? gameSnapshot.phase : null;
+
+    // crash state transitions (the renderer records firstSeenAt itself)
+    if (phase === 'crashed' && !CRASH.active) {
+      beginCrash(flightState, gameSnapshot, performance.now());
+    } else if (phase !== 'crashed' && CRASH.active) {
+      endCrash(); // e.g. R restarts the run: back to normal flight rendering
+    }
+
+    const nowMs = performance.now();
+    let dtFx = 0;
+    if (CRASH.active) {
+      dtFx = Math.min(0.05, Math.max(0, (nowMs - CRASH.lastNow) / 1000)); // clamp tab-switch jumps
+      CRASH.lastNow = nowMs;
+    }
+
+    const b = attitudeToBasis(flightState.attitude); // frozen state after crash: same basis every frame
     _vR.set(b.R.x, b.R.y, b.R.z);
     _vU.set(b.U.x, b.U.y, b.U.z);
     _vF.set(b.F.x, b.F.y, b.F.z);
-    _m4.makeBasis(_vR, _vU, _vF);
-    jet.quaternion.setFromRotationMatrix(_m4);
+    if (!CRASH.active) {
+      jet.position.set(p.x, p.y, p.z);
+      _m4.makeBasis(_vR, _vU, _vF);
+      jet.quaternion.setFromRotationMatrix(_m4);
+    } else {
+      stepCrashEffects(nowMs, dtFx); // owns the wreck's position + tumble while crashed
+    }
 
     // gate highlight: next = bright amber, passed = green, future = dim
     const nextGate = gameSnapshot && typeof gameSnapshot.nextGate === 'number' ? gameSnapshot.nextGate : -1;
@@ -201,6 +371,17 @@ export function createRenderer(canvas, world, opts = {}) {
       const dist = 26, height = 9;
       _camPos.set(p.x - b.F.x * dist, p.y + height, p.z - b.F.z * dist);
       camera.position.lerp(_camPos, 0.15);                 // smooth follow
+      if (CRASH.active) {
+        // impact shake: small decaying positional noise for ~0.8s after the crash
+        const SHAKE_DUR = 0.8;
+        const st = (nowMs - CRASH.firstSeenAt) / 1000;
+        if (st < SHAKE_DUR) {
+          const a = 2.2 * Math.pow(1 - st / SHAKE_DUR, 2); // amplitude decays to zero
+          camera.position.x += a * Math.sin(st * 47.3);
+          camera.position.y += a * 0.6 * Math.sin(st * 59.7 + 1.3);
+          camera.position.z += a * 0.8 * Math.sin(st * 41.1 + 2.1);
+        }
+      }
       _lookAt.set(p.x + b.F.x * 20, p.y + b.F.y * 20, p.z + b.F.z * 20);
       camera.up.set(0, 1, 0);
       camera.lookAt(_lookAt);
@@ -212,6 +393,11 @@ export function createRenderer(canvas, world, opts = {}) {
   function setCameraMode(mode) { if (mode === 'chase' || mode === 'cockpit') cameraMode = mode; }
 
   function dispose() {
+    endCrash(); // hide effect objects before teardown
+    debrisGeo.dispose();
+    debrisMat.dispose();
+    smokeGeo.dispose();
+    for (let i = 0; i < SMOKE_COUNT; i++) smokes[i].mesh.material.dispose();
     renderer.dispose();
     scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
   }

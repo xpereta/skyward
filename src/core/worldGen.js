@@ -1,5 +1,9 @@
 // core/worldGen.js — deterministic world generation: terrain heightfield + ordered gate chain.
 // Same seed always produces an identical world (deep-equal). No unseeded randomness.
+//
+// Worlds are data-driven: WORLD_PRESETS maps a preset id to a plain config object, and
+// generateWorld(seed, config) merges that config over DEFAULT_CONFIG. Adding a new world
+// is one entry in WORLD_PRESETS — no code changes needed.
 
 import { add, scale } from './vec3.js';
 
@@ -34,8 +38,8 @@ function makeNoise(rng, gridSize = 24) {
     return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
   }
   // fractal brownian motion: octaves of the same grid at increasing frequency.
-  // freq growth kept gentle (1.6x) so high-frequency detail stays low-amplitude and
-  // slopes remain flyable rather than cliff-like.
+  // freq growth kept gentle by default so high-frequency detail stays low-amplitude and
+  // slopes remain flyable rather than cliff-like (presets may raise it for dunes).
   function fbm(u, v, octaves = 3) {
     let val = 0, amp = 1, freq = 1, sum = 0;
     for (let o = 0; o < octaves; o++) {
@@ -60,28 +64,119 @@ export const WORLD_CONST = Object.freeze({
   MIN_GATE_CLEARANCE: 50,// required clearance above terrain (meters)
 });
 
-export function generateWorld(seed) {
+// --- world configuration -----------------------------------------------------------
+// A config object is plain data; every field optional. generateWorld(seed, config)
+// merges it over DEFAULT_CONFIG (shallow — configs are flat). The default below
+// reproduces the original hardcoded behavior EXACTLY: same noise call signature,
+// same peak exponent 1.35, base -30, corridor sigma 500 / strength 0.75, no falloff.
+export const DEFAULT_CONFIG = Object.freeze({
+  name: 'alpine',        // display label (menu uses listWorlds() for id/label pairs)
+  mountainHeight: WORLD_CONST.MOUNTAIN_HEIGHT,
+  waterLevel: WORLD_CONST.WATER_LEVEL,
+  octaves: 3,            // fbm octaves (more = finer detail)
+  frequencyScale: 1.0,   // multiplies base noise frequency (higher = smaller features)
+  peakSharpness: 1.35,   // exponent on the normalized height field (>1 sharpens peaks)
+  corridorWidth: 500,    // gaussian sigma of the flyable corridor along the gate path
+  corridorStrength: 0.75,// how much terrain is flattened inside the corridor (0..1)
+  radialFalloff: false,  // true: edges sink below waterLevel (islands/archipelago look)
+  falloffRadius: 2600,   // distance from center where elevation reaches its floor
+  falloffFloor: -70,     // elevation at the world edge when radialFalloff is on
+  gateCount: WORLD_CONST.GATE_COUNT,
+});
+
+// Named worlds. Each entry is a plain config object (frozen); adding a world = one entry.
+export const WORLD_PRESETS = Object.freeze({
+  alpine: Object.freeze({ ...DEFAULT_CONFIG }),
+  islands: Object.freeze({
+    name: 'islands',
+    mountainHeight: 150,   // low hills — most of the map is sea
+    waterLevel: -2,        // high water level → archipelago
+    octaves: 3,
+    frequencyScale: 1.0,
+    peakSharpness: 1.2,    // gentle dune-like crests
+    corridorWidth: 500,
+    corridorStrength: 0.75,
+    radialFalloff: true,   // edges sink to ocean so the world reads as an island chain
+    falloffRadius: 2600,
+    falloffFloor: -80,
+    gateCount: WORLD_CONST.GATE_COUNT,
+  }),
+  canyon: Object.freeze({
+    name: 'canyon',
+    mountainHeight: 340,   // tall walls
+    waterLevel: -18,
+    octaves: 5,            // extra detail for eroded rock
+    frequencyScale: 1.6,   // tighter features → narrow ridges and gorges
+    peakSharpness: 2.2,    // strong peak sharpening → sharp canyon rims
+    corridorWidth: 400,    // narrower flyable slot through the walls
+    corridorStrength: 0.75,
+    radialFalloff: false,
+    gateCount: WORLD_CONST.GATE_COUNT,
+  }),
+  dunes: Object.freeze({
+    name: 'dunes',
+    mountainHeight: 120,   // low rolling sand
+    waterLevel: -30,       // almost no water — a desert sea of sand
+    octaves: 4,            // smooth base + fine ripple detail
+    frequencyScale: 0.7,   // long-wavelength swells
+    peakSharpness: 1.05,   // nearly round crests (no rocky peaks)
+    corridorWidth: 600,    // wide open flight lanes between dunes
+    corridorStrength: 0.6,
+    radialFalloff: false,
+    gateCount: WORLD_CONST.GATE_COUNT,
+  }),
+});
+
+// Menu helper: enumerate selectable worlds as { id, label } pairs (no internals).
+export function listWorlds() {
+  return Object.keys(WORLD_PRESETS).map((id) => ({ id, label: WORLD_PRESETS[id].name }));
+}
+
+function resolveConfig(config) {
+  // Merge a preset/override object over the defaults. Accepts null/undefined (default),
+  // or any partial config — including one whose `name` matches a preset id, in which case
+  // that preset is used as the base and the given fields override it. Deterministic:
+  // same seed + same config → identical world.
+  let base = DEFAULT_CONFIG;
+  if (config && typeof config === 'object') {
+    const preset = WORLD_PRESETS[config.name];
+    if (preset) base = preset;
+    return Object.freeze({ ...base, ...config });
+  }
+  return base;
+}
+
+export function generateWorld(seed, config) {
+  const cfg = resolveConfig(config);
   const rng = mulberry32(Math.floor(seed));
   const noise = makeNoise(rng);
-  const { SIZE, MOUNTAIN_HEIGHT } = WORLD_CONST;
+  const { SIZE } = WORLD_CONST;
   const half = SIZE / 2;
 
-  // terrain: ridged-ish mountains with a flatter corridor near the spawn axis
+  // terrain: fbm mountains shaped by the config, with a flatter corridor near the gate path
   function heightAt(x, z) {
-    const u = (x + half) / SIZE, v = (z + half) / SIZE;
-    let h = noise.fbm(u, v, 3);
-    // sharpen peaks mildly: push distribution toward extremes without steepening slopes too much
-    h = Math.pow(h, 1.35);
-    let elev = -30 + h * MOUNTAIN_HEIGHT;
+    const u = ((x + half) / SIZE) * cfg.frequencyScale;
+    const v = ((z + half) / SIZE) * cfg.frequencyScale;
+    let h = noise.fbm(u, v, cfg.octaves);
+    // sharpen peaks: push distribution toward extremes without steepening slopes too much
+    h = Math.pow(h, cfg.peakSharpness);
+    let elev = -30 + h * cfg.mountainHeight;
+    if (cfg.radialFalloff) {
+      // sink the world edges to falloffFloor so borders read as open ocean
+      const d = Math.sqrt(x * x + z * z) / cfg.falloffRadius;
+      const f = 1 - Math.exp(-d * d);
+      elev += (cfg.falloffFloor - elev) * f;
+    }
     // flatten a corridor along the gate path (z axis) so runs are flyable
-    const corridor = Math.exp(-(x * x) / (2 * 500 * 500));
-    elev *= (1 - 0.75 * corridor);
+    const sigma = cfg.corridorWidth;
+    const corridor = Math.exp(-(x * x) / (2 * sigma * sigma));
+    elev *= (1 - cfg.corridorStrength * corridor);
     return elev;
   }
 
   // --- gates: ordered chain snaking across the world ---
   const gates = [];
-  const n = WORLD_CONST.GATE_COUNT;
+  const n = cfg.gateCount;
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
     const z = -half + 400 + t * (SIZE - 800);           // spread along z with margins
@@ -95,7 +190,7 @@ export function generateWorld(seed) {
   return {
     seed: Math.floor(seed),
     size: SIZE,
-    waterLevel: WORLD_CONST.WATER_LEVEL,
+    waterLevel: cfg.waterLevel,
     heightAt,
     gates,
     // gates lie toward +z from spawn; flightModel forward(yaw=PI) points +z
