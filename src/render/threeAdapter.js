@@ -10,7 +10,7 @@ import { noseDirection } from '../core/flightModel.js';
 function attitudeToBasis(attitude) {
   const F = normalize(noseDirection(attitude));          // world-space nose direction
   const up0 = { x: 0, y: 1, z: 0 };
-  let R = cross(up0, F);                                  // right (perp to nose & world-up)
+  let R = cross(F, up0);                                  // body-right (perp to nose & world-up; +x when nose is +z)
   if (R.x * R.x + R.y * R.y + R.z * R.z < 1e-8) R = { x: 1, y: 0, z: 0 }; // nose ~vertical fallback
   R = normalize(R);
   const U1 = cross(F, R);                                 // level up in vertical plane of F
